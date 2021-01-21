@@ -5,13 +5,11 @@ import sys
 import socket
 import time
 
-class ClientConnection(QThread):
-    address = pyqtSignal(tuple)
-    message = pyqtSignal(tuple)
-
 class Server(QThread):
     messageSender = pyqtSignal(tuple)
     generalMessageSender = pyqtSignal(str)
+    userdisconnect = pyqtSignal(tuple)
+    deleteself = pyqtSignal(object)
 
     def __init__(self, clientsocket, addr):
         super().__init__()
@@ -21,14 +19,21 @@ class Server(QThread):
     def run(self):
         while True:
             try:
-                message = self.clientsocket.recv(16384).decode('utf-8')
-            except ConnectionResetError:
+                message = self.clientsocket.recv(16384).decode()
+                if not message:
+                    raise Exception
+            except:
                 self.generalMessageSender.emit("[!] {}:{}과의 연결이 끊어졌습니다.".format(self.addr[0], self.addr[1]))
+                self.userdisconnect.emit((self.addr[0], self.addr[1]))
+                self.deleteself.emit(self)
                 break
             if message:
-                self.messageSender.emit((self.addr[0], message))
+                self.messageSender.emit((self.addr[0], self.addr[1], message))
                 print(message)
             time.sleep(0.5)
+    
+    def send(self, msg):
+        self.clientsocket.send(msg.encode())
 
 class CreateSocket(QThread):
     address_sender = pyqtSignal(tuple)
@@ -45,6 +50,7 @@ class CreateSocket(QThread):
         self.close = False
         self.clients = []
         self.usertable = []
+        self.usertabledict = {}
 
         try:
             self.serversocket.bind(('', self.port))
@@ -87,19 +93,41 @@ class CreateSocket(QThread):
 
             self.usertableSender.emit(self.usertable)
 
+            self.usertabledict[(address[0], address[1])] = displayname
+
             worker = Server(clientsocket, address)
             worker.messageSender.connect(self.messagesender)
             worker.generalMessageSender.connect(self.generalMessageSender)
+            worker.userdisconnect.connect(self.userdisconnect)
+            worker.deleteself.connect(self.deleteclient)
             self.clients.append(worker)
             self.clients[self.clients.index(worker)].start()
 
     @pyqtSlot(tuple)
     def messagesender(self, msg):
-        self.message.emit(msg)
+        msg = "{}({}:{}): {}".format(self.usertabledict[(msg[0], msg[1])], msg[0], msg[1], msg[2])
+        self.message.emit((msg,))
+
+        for client in self.clients:
+            client.send(msg)
 
     @pyqtSlot(str)
     def generalMessageSender(self, msg):
         self.generalMessage.emit(msg)
+
+    @pyqtSlot(tuple)
+    def userdisconnect(self, user):
+        ip = user[0]
+        port = user[1]
+        nick = self.usertabledict[(ip, port)]
+
+        self.usertable.remove((ip, port, nick))
+        self.usertableSender.emit(self.usertable)
+
+    @pyqtSlot(object)
+    def deleteclient(self, client):
+        self.clients.remove(client)
+        print("removed {}".format(client))
 
 class ServerUI(QMainWindow):
     def __init__(self):
@@ -134,9 +162,9 @@ class ServerUI(QMainWindow):
         self.horizontalLayout = QHBoxLayout()
         self.horizontalLayout.setObjectName("horizontalLayout")
 
-        self.tableView = QTableView(self.centralwidget)
-        self.tableView.setObjectName("tableView")
-        self.horizontalLayout.addWidget(self.tableView)
+        self.tableWidget = QTableWidget(self.centralwidget)
+        self.tableWidget.setObjectName("tableWidget")
+        self.horizontalLayout.addWidget(self.tableWidget)
 
         self.logtextbox = QTextBrowser(self.centralwidget)
         self.logtextbox.setObjectName("logtextbox")
@@ -149,6 +177,7 @@ class ServerUI(QMainWindow):
         self.retranslateUi()
         self.make_connection()
         self.show()
+        self.start()
 
     def retranslateUi(self):
         _translate = QtCore.QCoreApplication.translate
@@ -164,7 +193,8 @@ class ServerUI(QMainWindow):
         self.stopbutton.clicked.connect(self.stop)
 
     def start(self):
-        port = self.portedit.text()
+        # port = self.portedit.text()
+        port = 1111
 
         self.logtextbox.append("[*] 서버를 시작합니다.")
         self.logtextbox.append("[*] 서버 포트: {}".format(port))
@@ -211,7 +241,7 @@ class ServerUI(QMainWindow):
 
     @pyqtSlot(tuple)
     def display(self, message):
-        self.logtextbox.append("[*] {} 로부터 메시지가 도착했습니다: {}".format(message[0], message[1]))
+        self.logtextbox.append("[*] " + str(message))
 
     @pyqtSlot(str)
     def generalDisplay(self, message):
@@ -219,10 +249,16 @@ class ServerUI(QMainWindow):
 
     @pyqtSlot(list)
     def usertableDisplay(self, usertable):
-        self.tableView.setRowCount()
-        self.tableView.setRowCount(len(usertable))
+        column_headers = ('아아피', '포트', '닉네임')
+        self.tableWidget.setHorizontalHeaderLabels(column_headers)
+        self.tableWidget.setRowCount(len(usertable))
+        self.tableWidget.setColumnCount(3)
 
-        self.tableView.setHorizontalHeaderLabels(["IP", "포트", "닉네임"])
+        for packeddata, index in zip(usertable, range(len(usertable))):
+            ip, port, nick = packeddata
+            self.tableWidget.setItem(index, 0, QTableWidgetItem(ip))
+            self.tableWidget.setItem(index, 1, QTableWidgetItem(str(port)))
+            self.tableWidget.setItem(index, 2, QTableWidgetItem(nick))
 
 
 app = QApplication(sys.argv)

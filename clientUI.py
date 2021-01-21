@@ -6,6 +6,8 @@ import socket
 import time
 
 class ClientSocketGenerator(QThread):
+    usertablesender = pyqtSignal(list)
+    
     def __init__(self, host, port, nick):
         super().__init__()
         self.host = host
@@ -33,8 +35,17 @@ class ClientSocketGenerator(QThread):
 
             self.usertable.append((ip, port, nick))
 
+        self.usertablesender.emit(self.usertable)
+
     def run(self):
-        pass
+        while True:
+            msg = self.client_socket.recv(16384).decode()
+
+            if msg == "wait for sending":
+                time.sleep(1.5)
+                continue
+
+            print(msg)
 
     def close(self):
         self.client_socket.close()
@@ -62,9 +73,9 @@ class ClientUI(QMainWindow):
         self.gridLayout = QGridLayout()
         self.gridLayout.setObjectName("gridLayout")
 
-        self.usertable = QTableView(self.centralwidget)
-        self.usertable.setObjectName("usertable")
-        self.gridLayout.addWidget(self.usertable, 0, 2, 1, 1)
+        self.tableWidget = QTableWidget(self.centralwidget)
+        self.tableWidget.setObjectName("tableWidget")
+        self.gridLayout.addWidget(self.tableWidget, 0, 2, 1, 1)
 
         self.userinput = QLineEdit(self.centralwidget)
         self.userinput.setObjectName("userinput")
@@ -85,7 +96,8 @@ class ClientUI(QMainWindow):
 
         self.retranslateUi()
         self.sendbutton.clicked.connect(self.send)
-        self.worker = ClientSocketGenerator("127.0.0.1", 1111, "DeVar")
+        self.worker = ClientSocketGenerator("127.0.0.1", 1111, "ㅁㄴㅇㄹㄴㅇㄻ")
+        self.worker.usertablesender.connect(self.usertableDisplay)
         self.worker.start()
         self.show()
 
@@ -105,6 +117,19 @@ class ClientUI(QMainWindow):
         text = self.userinput.text()
         self.userinput.setText("")
         self.worker.send(text)
+
+    @pyqtSlot(list)
+    def usertableDisplay(self, usertable):
+        column_headers = ('아아피', '포트', '닉네임')
+        self.tableWidget.setHorizontalHeaderLabels(column_headers)
+        self.tableWidget.setRowCount(len(usertable))
+        self.tableWidget.setColumnCount(3)
+
+        for packeddata, index in zip(usertable, range(len(usertable))):
+            ip, port, nick = packeddata
+            self.tableWidget.setItem(index, 0, QTableWidgetItem(ip))
+            self.tableWidget.setItem(index, 1, QTableWidgetItem(str(port)))
+            self.tableWidget.setItem(index, 2, QTableWidgetItem(nick))
 
 app = QApplication(sys.argv)
 w = ClientUI()

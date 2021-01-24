@@ -24,8 +24,9 @@ class Server(QThread):
                     raise Exception
             except:
                 self.generalMessageSender.emit("[!] {}:{}과의 연결이 끊어졌습니다.".format(self.addr[0], self.addr[1]))
-                self.userdisconnect.emit((self.addr[0], self.addr[1]))
                 self.deleteself.emit(self)
+                self.userdisconnect.emit((self.addr[0], self.addr[1]))
+                # self.messageSender.emit((self.addr[0], self.addr[1], message))
                 break
             if message:
                 self.messageSender.emit((self.addr[0], self.addr[1], message))
@@ -78,20 +79,16 @@ class CreateSocket(QThread):
                 break
             self.address_sender.emit(address)
 
-            displayname = clientsocket.recv(16384).decode().replace("DISPLAYNAME", "")
+            displayname = clientsocket.recv(16384).decode().replace("DISPLAYNAME ", "")
             self.usertable.append((address[0], address[1], displayname))
 
-            usertableForClient = []
+            res = self.packer(self.usertable)
+            clientsocket.send(res.encode())
 
-            for user in self.usertable:
-                temp = " ".join([user[0], str(user[1]), user[2]]).strip()
-                usertableForClient.append(temp)
+            res = "sysut\n" + res
 
-            result = "\n"
-            result = result.join(usertableForClient)
-            clientsocket.send(result.encode())
-
-            self.usertableSender.emit(self.usertable)
+            for client in self.clients:
+                client.send(res)
 
             self.usertabledict[(address[0], address[1])] = displayname
 
@@ -103,9 +100,25 @@ class CreateSocket(QThread):
             self.clients.append(worker)
             self.clients[self.clients.index(worker)].start()
 
+    def packer(self, usertable):
+        usertableForClient = []
+
+        for user in usertable:
+            temp = " ".join([user[0].strip(), str(user[1]).strip(), user[2].strip()]).strip()
+            usertableForClient.append(temp)
+            print(temp)
+
+        result = "\n"
+        result = result.join(usertableForClient)
+
+        self.usertableSender.emit(self.usertable)
+
+        return result
+
     @pyqtSlot(tuple)
     def messagesender(self, msg):
-        msg = "{}({}:{}): {}".format(self.usertabledict[(msg[0], msg[1])], msg[0], msg[1], msg[2])
+        # msg = "{}({}:{}): {}".format(self.usertabledict[(msg[0], msg[1])], msg[0], msg[1], msg[2])
+        msg = "{}:{}".format(self.usertabledict[(msg[0], msg[1])], msg[2])
         self.message.emit((msg,))
 
         for client in self.clients:
@@ -123,6 +136,11 @@ class CreateSocket(QThread):
 
         self.usertable.remove((ip, port, nick))
         self.usertableSender.emit(self.usertable)
+
+        res = "sysut\n" + self.packer(self.usertable)
+
+        for client in self.clients:
+            client.send(res)
 
     @pyqtSlot(object)
     def deleteclient(self, client):
